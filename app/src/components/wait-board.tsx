@@ -38,7 +38,9 @@ export function WaitBoard({
 }: Props) {
   const { prefs, loaded, update, toggleSaved } = usePreferences();
   const [location, setLocation] = useState<LocationState>({ status: 'idle' });
-  const [ranked, setRanked] = useState<RankedFacility[]>([]);
+  // Null until a location-based ranking exists; the render-time base ranking is
+  // used in the meantime so the board is never empty.
+  const [ranked, setRanked] = useState<RankedFacility[] | null>(null);
   const [refinedTimes, setRefinedTimes] = useState<Record<string, DriveTimeResult> | null>(null);
 
   const region = fixedRegion ?? prefs.region;
@@ -82,48 +84,54 @@ export function WaitBoard({
 
   const origin = location.status === 'ready' ? { lat: location.lat, lng: location.lng } : null;
 
-  // Rank on the device. This is pure arithmetic, so results appear instantly
-  // and keep working with no network at all.
+  /**
+   * The board as it looks before we know where the user is: the selected
+   * region, sorted by posted wait.
+   *
+   * Computed during render rather than in an effect, and that is the whole
+   * point. Effects do not run on the server, so building this list in one left
+   * the server HTML with an empty `<ol>` — no hospitals and no wait times for
+   * anyone without JavaScript, for search engines that do not execute it, and
+   * for everyone else until hydration finished. A wait-time board that needs
+   * JavaScript to show any wait times is the wrong shape for this product.
+   */
+  const baseRanking = useMemo<RankedFacility[]>(() => {
+    const inRegion = snapshot.facilities
+      .filter((f) => f.region === region)
+      .filter((f) => prefs.includeUrgentCare || f.kind !== 'urgent-care');
+
+    return [...inRegion]
+      .sort((a, b) => {
+        // A facility with no published wait is not a fast facility; it sorts
+        // last regardless.
+        if ((a.waitMinutes == null) !== (b.waitMinutes == null)) {
+          return a.waitMinutes == null ? 1 : -1;
+        }
+        return (a.waitMinutes ?? 0) - (b.waitMinutes ?? 0);
+      })
+      .map((facility) => ({
+        facility,
+        driveMinutes: 0,
+        distanceKm: 0,
+        parkingMinutes: 0,
+        doorToDoctorMinutes: null,
+        driveTimeSource: 'estimate' as const,
+        liveTraffic: false,
+        minutesSavedVsWorst: null,
+        isBest: false,
+        pediatricPreferred: false,
+      }));
+  }, [snapshot.facilities, region, prefs.includeUrgentCare]);
+
+  // Rank on the device once we have a location. Pure arithmetic, so results
+  // appear instantly and keep working with no network at all.
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       const facilities: NormalizedFacility[] = snapshot.facilities;
-      if (facilities.length === 0) {
-        setRanked([]);
-        return;
-      }
-
-      if (!origin) {
-        // With no location we cannot compute totals, so present the region
-        // sorted by posted wait and say so plainly.
-        const inRegion = facilities
-          .filter((f) => f.region === region)
-          .filter((f) => prefs.includeUrgentCare || f.kind !== 'urgent-care');
-
-        const sorted = [...inRegion].sort((a, b) => {
-          if ((a.waitMinutes == null) !== (b.waitMinutes == null)) {
-            return a.waitMinutes == null ? 1 : -1;
-          }
-          return (a.waitMinutes ?? 0) - (b.waitMinutes ?? 0);
-        });
-
-        if (!cancelled) {
-          setRanked(
-            sorted.map((facility) => ({
-              facility,
-              driveMinutes: 0,
-              distanceKm: 0,
-              parkingMinutes: 0,
-              doorToDoctorMinutes: null,
-              driveTimeSource: 'estimate' as const,
-              liveTraffic: false,
-              minutesSavedVsWorst: null,
-              isBest: false,
-              pediatricPreferred: false,
-            })),
-          );
-        }
+      if (facilities.length === 0 || !origin) {
+        if (!cancelled) setRanked(null);
         return;
       }
 
@@ -193,12 +201,15 @@ export function WaitBoard({
     return () => controller.abort();
   }, [routingUpgradeAvailable, origin, region, snapshot.facilities, refinedTimes]);
 
+  // Location-based ranking when we have one, otherwise the render-time list.
+  const effectiveRanking = ranked ?? baseRanking;
+
   const savedFirst = useMemo(() => {
-    if (prefs.saved.length === 0) return ranked;
-    const saved = ranked.filter((r) => prefs.saved.includes(r.facility.slug));
-    const rest = ranked.filter((r) => !prefs.saved.includes(r.facility.slug));
+    if (prefs.saved.length === 0) return effectiveRanking;
+    const saved = effectiveRanking.filter((r) => prefs.saved.includes(r.facility.slug));
+    const rest = effectiveRanking.filter((r) => !prefs.saved.includes(r.facility.slug));
     return [...saved, ...rest];
-  }, [ranked, prefs.saved]);
+  }, [effectiveRanking, prefs.saved]);
 
   const hasOrigin = Boolean(origin);
   const regionsAvailable = useMemo(
@@ -318,9 +329,9 @@ export function WaitBoard({
         </p>
       )}
 
-      <SpreadCallout ranked={ranked} regionLabel={REGION_LABELS[region as AhsRegionKey] ?? region} />
+      <SpreadCallout ranked={effectiveRanking} regionLabel={REGION_LABELS[region as AhsRegionKey] ?? region} />
 
-      <StatusLine snapshot={snapshot} hasOrigin={hasOrigin} ranked={ranked} />
+      <StatusLine snapshot={snapshot} hasOrigin={hasOrigin} ranked={effectiveRanking} />
 
       <ol className="space-y-3">
         {savedFirst.map((entry, index) => (
@@ -335,7 +346,7 @@ export function WaitBoard({
         ))}
       </ol>
 
-      {ranked.length === 0 && (
+      {effectiveRanking.length === 0 && (
         <p className="rounded-lg border p-4 text-sm text-muted">
           No facilities match these filters. Try including urgent care, or choose another area.
         </p>

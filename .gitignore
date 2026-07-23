@@ -1,0 +1,28 @@
+# Root ignores. The app has its own .gitignore for build artifacts.
+
+# ---------------------------------------------------------------------------
+# Business strategy — deliberately kept OUT of the repository
+# ---------------------------------------------------------------------------
+# The repo is intended to be public, because public repos get unlimited GitHub
+# Actions minutes (which is what makes 15-minute history capture free) and
+# because an open codebase is a genuine trust signal for a public-good health
+# tool.
+#
+# None of that requires publishing revenue projections, pricing strategy, or the
+# go-to-market playbook. Those files stay on local disk only.
+#
+# To publish them anyway, delete the two lines below and commit.
+business/
+research/
+
+# Local environment
+.env
+.env.local
+.env*.local
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

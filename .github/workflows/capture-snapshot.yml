@@ -1,0 +1,63 @@
+name: Capture wait-time snapshot
+
+# The real scheduler for history collection.
+#
+# Vercel's Hobby plan only permits daily cron, which is far too coarse to build
+# usable trend data. GitHub Actions schedules are free and fine-grained, so the
+# capture runs from here and simply calls the app's cron endpoint.
+#
+# Cost note: on a PUBLIC repository, Actions minutes are unlimited, so this
+# 15-minute cadence is free. On a PRIVATE repository each run bills a rounded-up
+# minute — 96 runs/day is about 2,880 minutes/month against a 2,000-minute free
+# allowance, so make the repo public or widen the interval to */30.
+#
+# GitHub disables scheduled workflows on repositories with no commits for 60
+# days. If captures silently stop, check for that first.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {} # Lets you trigger a capture by hand to test setup.
+
+# Never let two captures overlap; the bucketed insert would just discard the
+# duplicate, but there is no reason to spend the run.
+concurrency:
+  group: capture-snapshot
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger snapshot capture
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::APP_URL and CRON_SECRET repository secrets must both be set."
+            exit 1
+          fi
+
+          response=$(curl --silent --show-error --max-time 60 \
+            --write-out '\n%{http_code}' \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL%/}/api/cron/snapshot")
+
+          body=$(echo "$response" | sed '$d')
+          status=$(echo "$response" | tail -n1)
+
+          echo "HTTP $status"
+          echo "$body"
+
+          # 202 means upstream was stale and we deliberately skipped the write.
+          # That is a healthy outcome, not a failure.
+          if [ "$status" = "200" ] || [ "$status" = "202" ]; then
+            exit 0
+          fi
+
+          echo "::error::Snapshot capture failed with HTTP $status"
+          exit 1

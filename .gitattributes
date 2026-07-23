@@ -1,0 +1,20 @@
+# Normalize line endings.
+#
+# Development happens on Windows; the Vercel build and the GitHub Actions runner
+# are both Linux. Without this, every file checked out on Windows gets CRLF and
+# shows up as wholly modified in diffs, and the shell script inside the capture
+# workflow would fail on the runner with a CRLF parse error.
+#
+# Text is stored LF in the repository and checked out native on Windows.
+* text=auto
+
+# Files that must be LF everywhere, regardless of platform.
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Binary — never touch these.
+*.png binary
+*.ico binary
+*.jpg binary
+*.webp binary

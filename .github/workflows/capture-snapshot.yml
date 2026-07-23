@@ -1,26 +1,30 @@
 name: Capture wait-time snapshot
 
-# The real scheduler for history collection.
+# The scheduler for history collection.
 #
 # Vercel's Hobby plan only permits daily cron, which is far too coarse to build
-# usable trend data. GitHub Actions schedules are free and fine-grained, so the
-# capture runs from here and simply calls the app's cron endpoint.
+# usable trend data, so the capture runs from here and calls the app's cron
+# endpoint.
 #
-# Cost note: on a PUBLIC repository, Actions minutes are unlimited, so this
-# 15-minute cadence is free. On a PRIVATE repository each run bills a rounded-up
-# minute — 96 runs/day is about 2,880 minutes/month against a 2,000-minute free
-# allowance, so make the repo public or widen the interval to */30.
+# Cadence is best-effort, not guaranteed. GitHub queues scheduled workflows and
+# drops or delays them under load, and it actively deprioritises schedules that
+# keep failing — observed intervals of 2+ hours against a 15-minute request.
+# That is acceptable here: snapshots are timestamped into fixed buckets, so
+# irregular sampling costs resolution but never corrupts the data. If you need a
+# dependable cadence later, point any external cron service at the same endpoint
+# with the same bearer token; nothing about the app has to change.
 #
-# GitHub disables scheduled workflows on repositories with no commits for 60
-# days. If captures silently stop, check for that first.
+# Cost: on a PUBLIC repository Actions minutes are unlimited, so this is free.
+# On a PRIVATE repository each run bills a rounded-up minute — widen to */30.
+#
+# GitHub also disables scheduled workflows on repositories with no commits for
+# 60 days. If captures stop silently, check that first.
 
 on:
   schedule:
     - cron: '*/15 * * * *'
-  workflow_dispatch: {} # Lets you trigger a capture by hand to test setup.
+  workflow_dispatch: {} # Trigger by hand to test setup.
 
-# Never let two captures overlap; the bucketed insert would just discard the
-# duplicate, but there is no reason to spend the run.
 concurrency:
   group: capture-snapshot
   cancel-in-progress: false
@@ -37,12 +41,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Not-yet-configured is an expected state, not a failure. Failing here
+          # emails the owner every single run until the secrets are added, which
+          # trains them to ignore alerts from this workflow — the opposite of
+          # what an alert is for. Skip quietly instead and say why.
           if [ -z "${APP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
-            echo "::error::APP_URL and CRON_SECRET repository secrets must both be set."
-            exit 1
+            echo "::notice::Skipping — APP_URL and CRON_SECRET repository secrets are not set yet."
+            echo "Add them under Settings > Secrets and variables > Actions, then re-run."
+            exit 0
           fi
 
           response=$(curl --silent --show-error --max-time 60 \
+            --retry 2 --retry-delay 5 --retry-connrefused \
             --write-out '\n%{http_code}' \
             --header "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL%/}/api/cron/snapshot")
@@ -53,11 +63,30 @@ jobs:
           echo "HTTP $status"
           echo "$body"
 
-          # 202 means upstream was stale and we deliberately skipped the write.
-          # That is a healthy outcome, not a failure.
-          if [ "$status" = "200" ] || [ "$status" = "202" ]; then
-            exit 0
-          fi
-
-          echo "::error::Snapshot capture failed with HTTP $status"
-          exit 1
+          case "$status" in
+            200)
+              echo "::notice::Snapshot captured."
+              exit 0
+              ;;
+            202)
+              # Upstream data was stale, so the write was deliberately skipped
+              # to avoid duplicating a reading into the history table. Healthy.
+              echo "::notice::Upstream stale; write skipped by design."
+              exit 0
+              ;;
+            401)
+              echo "::error::Unauthorized — CRON_SECRET here does not match the one set in Vercel."
+              exit 1
+              ;;
+            503)
+              # AHS being unreachable is their outage, not ours, and it resolves
+              # itself. Warn so it is visible in the run history, but do not
+              # fail — a red X should mean something is wrong with our setup.
+              echo "::warning::Upstream AHS feed unavailable; nothing captured this run."
+              exit 0
+              ;;
+            *)
+              echo "::error::Snapshot capture failed with HTTP $status"
+              exit 1
+              ;;
+          esac

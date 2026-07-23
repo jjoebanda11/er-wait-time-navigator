@@ -106,6 +106,23 @@ Update `NEXT_PUBLIC_SITE_URL` to match and redeploy.
 
 ---
 
+### 1.6 Vercel Hobby plan constraints
+
+Two settings in `vercel.json` are Pro-gated or plan-limited. Both are already
+handled, but if you edit that file, know the boundaries:
+
+| Setting | Hobby behaviour |
+|---|---|
+| `regions` | **Pro only.** Present on Hobby, the build compiles fine and then the *deployment* fails afterwards. Removed from `vercel.json` for this reason — the default region is fine for an Alberta audience. |
+| `crons` | **Daily maximum.** Anything more frequent fails the deployment outright. Ours is daily; the real 15-minute cadence comes from GitHub Actions. |
+
+The signature of a Pro-gated setting is distinctive and worth recognising: the
+build log shows `Compiled successfully` and `Generating static pages (23/23)`,
+and *then* the deployment errors. A genuine code problem fails during compile
+instead.
+
+---
+
 ## Stage 2 — Start historical capture (free, ~20 min)
 
 > **Do this immediately after Stage 1, before launch, before users, before the

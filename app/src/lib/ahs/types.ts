@@ -92,6 +92,14 @@ export interface NormalizedFacility {
   waitMinutes: number | null;
   /** True when AHS explicitly flags this site's times as unavailable. */
   waitUnavailable: boolean;
+  /**
+   * The exact string AHS published, before parsing — e.g. `"3 hr 38 min"`.
+   *
+   * Retained for provenance. If a parsing assumption ever turns out to be
+   * wrong, this is the only way to re-derive the truth from archived rows
+   * rather than discovering the history is quietly corrupt.
+   */
+  rawWaitTime: string;
   /** Cleaned note: HTML entities decoded, `<br />` turned into newlines. */
   note: string;
   address: string;
@@ -100,8 +108,18 @@ export interface NormalizedFacility {
   coords: GeoPoint;
   /** AHS facility detail page. */
   infoUrl: string;
-  /** Google Maps link supplied by AHS. */
+  /**
+   * Google Maps link supplied by AHS. Coordinate-based, so it is unambiguous
+   * but displays as raw numbers rather than a place name.
+   */
   mapsUrl: string;
+  /**
+   * Turn-by-turn directions link built from the facility name and full civic
+   * address, so Maps shows "Royal Alexandra Hospital" rather than
+   * "53.556151,-113.496108". A person deciding whether to trust a destination
+   * at 2am should not have to verify a pair of decimals.
+   */
+  directionsUrl: string;
   /** Present on split records, e.g. `"Children's emergency"`. */
   department: string | null;
   siteClosingSoon: boolean;

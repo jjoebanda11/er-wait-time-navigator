@@ -105,12 +105,21 @@ export default async function FacilityPage({
 
         <div className="mt-4 flex flex-wrap gap-2">
           <a
-            href={facility.mapsUrl}
+            href={facility.directionsUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white hover:bg-brand-700"
           >
             Directions
+          </a>
+          <a
+            href={facility.mapsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg border px-4 py-2 font-semibold hover:bg-[var(--bg-subtle)]"
+            title="Opens the exact coordinates published by AHS"
+          >
+            Exact map pin
           </a>
           <Link
             href={`/${citySlug}-er-wait-times`}

@@ -19,19 +19,6 @@ export const metadata: Metadata = {
 export default async function HomePage() {
   const snapshot = await getWaitTimes();
 
-  const edmonton = snapshot.facilities.filter((f) => f.region === 'Edmonton');
-  const withWaits = edmonton.filter((f) => f.waitMinutes != null);
-  const fastest = withWaits.reduce(
-    (best, f) => (best == null || f.waitMinutes! < best.waitMinutes! ? f : best),
-    null as (typeof withWaits)[number] | null,
-  );
-  const slowest = withWaits.reduce(
-    (worst, f) => (worst == null || f.waitMinutes! > worst.waitMinutes! ? f : worst),
-    null as (typeof withWaits)[number] | null,
-  );
-  const spread =
-    fastest && slowest ? slowest.waitMinutes! - fastest.waitMinutes! : null;
-
   const routingUpgradeAvailable = Boolean(
     config.routing.orsApiKey || config.routing.googleRoutesApiKey,
   );
@@ -47,14 +34,6 @@ export default async function HomePage() {
           be seen — the posted wait <em>plus</em> your drive and parking. Free, no account.
         </p>
 
-        {spread != null && spread >= 60 && fastest && slowest && (
-          <p className="mt-4 rounded-xl border-2 border-[var(--color-band-green)] bg-[var(--color-band-green-soft)] p-4 text-base">
-            <strong>Right now in the Edmonton area there is a {formatDuration(spread)} gap</strong>{' '}
-            between the shortest posted wait ({fastest.name}, {formatDuration(fastest.waitMinutes)})
-            and the longest ({slowest.name}, {formatDuration(slowest.waitMinutes)}). Which one you
-            drive to matters more than when you leave.
-          </p>
-        )}
       </section>
 
       <WaitBoard snapshot={snapshot} routingUpgradeAvailable={routingUpgradeAvailable} />

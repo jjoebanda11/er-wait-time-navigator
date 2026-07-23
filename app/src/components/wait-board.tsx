@@ -1,10 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { NormalizedFacility, WaitTimeSnapshot } from '@/lib/ahs/types';
+import type { AhsRegionKey, NormalizedFacility, WaitTimeSnapshot } from '@/lib/ahs/types';
 import { REGION_LABELS, REGION_SLUGS } from '@/lib/ahs/parse';
 import { estimateProvider, type DriveTimeResult } from '@/lib/geo/drive-time';
-import { rankFacilities, type PatientType, type RankedFacility } from '@/lib/rank';
+import {
+  formatDuration,
+  rankFacilities,
+  type PatientType,
+  type RankedFacility,
+} from '@/lib/rank';
 import { usePreferences } from '@/lib/preferences';
 import { FacilityCard } from './facility-card';
 
@@ -313,6 +318,8 @@ export function WaitBoard({
         </p>
       )}
 
+      <SpreadCallout ranked={ranked} regionLabel={REGION_LABELS[region as AhsRegionKey] ?? region} />
+
       <StatusLine snapshot={snapshot} hasOrigin={hasOrigin} ranked={ranked} />
 
       <ol className="space-y-3">
@@ -333,6 +340,55 @@ export function WaitBoard({
           No facilities match these filters. Try including urgent care, or choose another area.
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * The headline insight: how much the choice of facility is worth right now.
+ *
+ * Computed from the facilities actually on screen, so it can never contradict
+ * the board beneath it — an earlier version was hardcoded to Edmonton and would
+ * cheerfully quote Edmonton numbers while the user was looking at Fort McMurray.
+ *
+ * Suppressed below an hour, because a spread that small is inside the noise of
+ * these estimates and does not justify sending anyone further afield.
+ */
+function SpreadCallout({
+  ranked,
+  regionLabel,
+}: {
+  ranked: RankedFacility[];
+  regionLabel: string;
+}) {
+  const known = ranked.filter((r) => r.facility.waitMinutes != null);
+  if (known.length < 2) return null;
+
+  const sorted = [...known].sort(
+    (a, b) => a.facility.waitMinutes! - b.facility.waitMinutes!,
+  );
+  const shortest = sorted[0];
+  const longest = sorted[sorted.length - 1];
+  const spread = longest.facility.waitMinutes! - shortest.facility.waitMinutes!;
+  if (spread < 60) return null;
+
+  return (
+    <div
+      className="rounded-xl border-2 p-4"
+      style={{
+        borderColor: 'var(--color-band-green)',
+        background: 'var(--color-band-green-soft)',
+      }}
+    >
+      <p className="text-base leading-relaxed">
+        <strong>
+          Right now in {regionLabel} there is a {formatDuration(spread)} gap
+        </strong>{' '}
+        between the shortest posted wait ({shortest.facility.name},{' '}
+        {formatDuration(shortest.facility.waitMinutes)}) and the longest (
+        {longest.facility.name}, {formatDuration(longest.facility.waitMinutes)}). Which one you
+        drive to matters more than when you leave.
+      </p>
     </div>
   );
 }

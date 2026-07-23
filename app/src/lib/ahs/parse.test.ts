@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './__fixtures__/ahs-sample.json';
 import {
+  buildDirectionsUrl,
   cleanText,
   normalizeFacility,
   normalizePayload,
@@ -107,6 +108,32 @@ describe('splitField', () => {
     expect(splitField('a[;]b')).toEqual(['a', 'b']);
     expect(splitField('plain')).toEqual(['plain']);
     expect(splitField(null)).toEqual([]);
+  });
+});
+
+describe('buildDirectionsUrl', () => {
+  it('sends the user to a named place, not a pair of coordinates', () => {
+    const url = buildDirectionsUrl(
+      'Royal Alexandra Hospital',
+      '10240 Kingsway Avenue NW Edmonton Alberta T5H 3V9',
+    );
+    expect(url).toContain('google.com/maps/dir/');
+    expect(decodeURIComponent(url)).toContain('Royal Alexandra Hospital');
+    expect(decodeURIComponent(url)).toContain('10240 Kingsway Avenue NW Edmonton');
+  });
+
+  it('escapes characters that would otherwise break the URL', () => {
+    const url = buildDirectionsUrl("Stollery Children's Hospital", '8440 112 Street Edmonton');
+    // Spaces are what would actually truncate the link. Apostrophes are legal
+    // in a query value and encodeURIComponent leaves them alone by design.
+    expect(url).not.toContain(' ');
+    expect(url).toContain('%20');
+    expect(decodeURIComponent(url)).toContain("Stollery Children's Hospital");
+  });
+
+  it('still produces a usable link when the address is missing', () => {
+    const url = buildDirectionsUrl('Some Hospital', '');
+    expect(decodeURIComponent(url)).toContain('Some Hospital');
   });
 });
 
@@ -267,6 +294,24 @@ describe('normalizePayload against the real AHS response', () => {
     const names = pediatric.map((f) => f.name);
     expect(names).toContain("Stollery Children's Hospital");
     expect(names).toContain("Alberta Children's Hospital");
+  });
+
+  it('preserves the raw AHS string for provenance', () => {
+    // Archived readings must remain re-derivable if a parsing assumption is
+    // ever found to be wrong.
+    for (const f of facilities) {
+      expect(f.rawWaitTime.length).toBeGreaterThan(0);
+      if (f.waitMinutes != null) {
+        expect(f.rawWaitTime).toMatch(/hr|min/i);
+      }
+    }
+  });
+
+  it('gives every facility a named directions link', () => {
+    for (const f of facilities) {
+      expect(f.directionsUrl).toContain('google.com/maps/dir/');
+      expect(decodeURIComponent(f.directionsUrl)).toContain(f.name);
+    }
   });
 
   it('never reports a negative or absurd wait', () => {

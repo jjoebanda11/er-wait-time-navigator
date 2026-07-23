@@ -19,6 +19,7 @@ export function bucketTimestamp(date = new Date()): Date {
 export async function recordSnapshot(
   facilities: NormalizedFacility[],
   capturedAt = bucketTimestamp(),
+  fetchedAt = new Date(),
 ): Promise<number> {
   const sql = db();
   if (!sql || facilities.length === 0) return 0;
@@ -30,6 +31,8 @@ export async function recordSnapshot(
     kind: f.kind,
     wait_minutes: f.waitMinutes,
     captured_at: capturedAt,
+    fetched_at: fetchedAt,
+    raw_wait_time: f.rawWaitTime,
   }));
 
   return safeQuery(async (client) => {
@@ -42,11 +45,58 @@ export async function recordSnapshot(
         'kind',
         'wait_minutes',
         'captured_at',
+        'fetched_at',
+        'raw_wait_time',
       )}
       ON CONFLICT (facility_slug, captured_at) DO NOTHING
     `;
     return result.count ?? 0;
   }, 0);
+}
+
+/** Outcome of a capture attempt, including attempts that wrote nothing. */
+export type CaptureStatus =
+  | 'success'
+  | 'stale_skipped'
+  | 'upstream_empty'
+  | 'upstream_error'
+  | 'write_error';
+
+export interface CaptureRun {
+  status: CaptureStatus;
+  bucket?: Date | null;
+  facilitiesSeen?: number;
+  rowsWritten?: number;
+  durationMs?: number;
+  triggerSource?: string;
+  error?: string | null;
+}
+
+/**
+ * Record that a capture was attempted and how it went.
+ *
+ * Must be called on every path, including failures. A gap in `wait_snapshots`
+ * with a corresponding failed run is an upstream outage; a gap with no run at
+ * all is a scheduler miss. Those are different facts, and only this table can
+ * tell them apart after the moment has passed.
+ */
+export async function recordCaptureRun(run: CaptureRun): Promise<void> {
+  await safeQuery(
+    (sql) => sql`
+      INSERT INTO capture_runs
+        (bucket, status, facilities_seen, rows_written, duration_ms, trigger_source, error)
+      VALUES (
+        ${run.bucket ?? null},
+        ${run.status},
+        ${run.facilitiesSeen ?? 0},
+        ${run.rowsWritten ?? 0},
+        ${run.durationMs ?? null},
+        ${run.triggerSource ?? 'cron'},
+        ${run.error ?? null}
+      )
+    `,
+    undefined,
+  );
 }
 
 export interface TrendPoint {
@@ -169,6 +219,65 @@ export async function getHistoryCoverage(): Promise<{
       };
     },
     { totalRows: 0, oldestCapture: null, facilitiesTracked: 0 },
+  );
+}
+
+export interface CaptureHealth {
+  totalRuns: number;
+  successfulRuns: number;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  recentFailures: { status: string; startedAt: string; error: string | null }[];
+}
+
+/**
+ * Capture reliability, for the operator and for anyone assessing the archive's
+ * completeness. Publishing this alongside the data is what lets a third party
+ * judge whether a gap is ours or upstream's.
+ */
+export async function getCaptureHealth(days = 7): Promise<CaptureHealth> {
+  return safeQuery(
+    async (sql) => {
+      const [summary] = await sql<
+        { total: number; ok: number; last_run: Date | null; last_success: Date | null }[]
+      >`
+        SELECT
+          COUNT(*)::int                                                  AS total,
+          COUNT(*) FILTER (WHERE status = 'success')::int                AS ok,
+          MAX(started_at)                                                AS last_run,
+          MAX(started_at) FILTER (WHERE status = 'success')              AS last_success
+        FROM capture_runs
+        WHERE started_at > now() - (${days} || ' days')::interval
+      `;
+
+      const failures = await sql<{ status: string; started_at: Date; error: string | null }[]>`
+        SELECT status, started_at, error
+        FROM capture_runs
+        WHERE status <> 'success'
+          AND started_at > now() - (${days} || ' days')::interval
+        ORDER BY started_at DESC
+        LIMIT 10
+      `;
+
+      return {
+        totalRuns: summary?.total ?? 0,
+        successfulRuns: summary?.ok ?? 0,
+        lastRunAt: summary?.last_run ? summary.last_run.toISOString() : null,
+        lastSuccessAt: summary?.last_success ? summary.last_success.toISOString() : null,
+        recentFailures: failures.map((f) => ({
+          status: f.status,
+          startedAt: f.started_at.toISOString(),
+          error: f.error,
+        })),
+      };
+    },
+    {
+      totalRuns: 0,
+      successfulRuns: 0,
+      lastRunAt: null,
+      lastSuccessAt: null,
+      recentFailures: [],
+    },
   );
 }
 

@@ -24,8 +24,38 @@ CREATE TABLE IF NOT EXISTS wait_snapshots (
   -- in history.ts), never defaulted to now(). Bucketing is what makes the
   -- dedupe index below meaningful: a retried or overlapping cron run lands on
   -- the same bucket and is rejected instead of duplicating the reading.
-  captured_at   TIMESTAMPTZ NOT NULL
+  captured_at   TIMESTAMPTZ NOT NULL,
+  -- Provenance. captured_at is floored to a bucket for deduplication, so it is
+  -- deliberately not the real observation time; fetched_at is. raw_wait_time
+  -- preserves exactly what AHS published, so a future correction to the parser
+  -- can be applied to history rather than invalidating it.
+  fetched_at    TIMESTAMPTZ,
+  raw_wait_time TEXT
 );
+
+-- One row per capture attempt, including attempts that wrote nothing. This is
+-- what makes a gap in the series interpretable: a missing window with a failed
+-- run recorded is an upstream outage; a missing window with no run at all is a
+-- scheduler miss. Those are different facts, and an archive that cannot tell
+-- them apart is not credible enough to publish or license.
+CREATE TABLE IF NOT EXISTS capture_runs (
+  id              BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  bucket          TIMESTAMPTZ,
+  -- success | stale_skipped | upstream_empty | upstream_error | write_error
+  status          TEXT        NOT NULL,
+  facilities_seen INTEGER     NOT NULL DEFAULT 0,
+  rows_written    INTEGER     NOT NULL DEFAULT 0,
+  duration_ms     INTEGER,
+  trigger_source  TEXT        NOT NULL DEFAULT 'cron',
+  error           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS capture_runs_started_idx
+  ON capture_runs (started_at DESC);
+
+CREATE INDEX IF NOT EXISTS capture_runs_status_idx
+  ON capture_runs (status, started_at DESC);
 
 -- Primary read pattern: one facility's recent history, newest first.
 CREATE INDEX IF NOT EXISTS wait_snapshots_facility_time_idx

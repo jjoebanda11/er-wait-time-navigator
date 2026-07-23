@@ -187,6 +187,21 @@ export function parseMunicipality(address: string): string | null {
   return place.length > 0 ? place.join(' ') : null;
 }
 
+/**
+ * Build a Google Maps directions URL that displays the facility by name.
+ *
+ * AHS supplies only a coordinate search link, which renders as a bare lat/lng
+ * pair — accurate, but it gives a user no way to confirm they are being sent to
+ * the right hospital. Using the name plus the full civic address resolves
+ * reliably for named hospitals and shows something a person can actually
+ * verify. The coordinate link is kept alongside it for anyone who wants the
+ * exact pin.
+ */
+export function buildDirectionsUrl(name: string, address: string): string {
+  const destination = address ? `${name}, ${address}` : name;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
+}
+
 export function slugify(value: string): string {
   return value
     .normalize('NFKD')
@@ -265,12 +280,14 @@ export function normalizeFacility(
       regionLabel: REGION_LABELS[region],
       waitMinutes: waitUnavailable ? null : waitMinutes,
       waitUnavailable,
+      rawWaitTime: (at(waits) ?? '').trim(),
       note: cleanText(at(notes)),
       address,
       municipality: parseMunicipality(address),
       coords,
       infoUrl: at(urls) ?? '',
       mapsUrl,
+      directionsUrl: buildDirectionsUrl(name, address),
       department: department?.trim() || null,
       siteClosingSoon: Boolean(raw.SiteClosingSoon),
     });

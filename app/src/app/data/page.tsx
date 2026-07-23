@@ -114,8 +114,7 @@ export default function DataPage() {
         <section>
           <h2 className="text-xl font-bold">Use our data</h2>
           <p className="mt-2">
-            Our normalized feed is public and free, including for commercial use, as long as you
-            keep the AHS attribution and the non-affiliation notice:
+            Our normalized feed is open, and we make no charge for it:
           </p>
           <p className="mt-2 break-all rounded-lg bg-[var(--bg-subtle)] p-3 font-mono text-sm">
             {config.site.url}/api/wait-times
@@ -124,6 +123,14 @@ export default function DataPage() {
             Add <code>?region=Edmonton</code> to filter. It returns parsed minute values,
             coordinates, and facility classifications rather than the display strings the upstream
             feed uses.
+          </p>
+          <p className="mt-2">
+            One important limit on that, which we want to be straight about: the underlying wait
+            times are Alberta Health Services content, and their terms of use grant a licence for
+            personal, non-commercial use only. Commercial use requires written permission from AHS.
+            We are not in a position to grant rights we do not hold, so what we offer here is our
+            own parsing and structuring work, free of charge — not a licence to the underlying
+            data. If you intend to use it commercially, seek permission from AHS directly.
           </p>
         </section>
 

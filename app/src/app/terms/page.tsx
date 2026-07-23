@@ -91,8 +91,12 @@ export default function TermsPage() {
             <li>Attempt to gain unauthorized access to any part of the service.</li>
           </ul>
           <p className="mt-2">
-            Our public wait-times endpoint may be used freely, including commercially, provided the
-            Alberta Health Services attribution and the non-affiliation notice are preserved.
+            Our public wait-times endpoint is offered free of charge, and the attribution and
+            non-affiliation notices must be preserved wherever it is used. Note that the underlying
+            wait times are Alberta Health Services content, licensed by AHS for personal,
+            non-commercial use; commercial use requires written permission from AHS. We grant no
+            rights in that underlying data, because they are not ours to grant. Anyone intending
+            commercial use is responsible for obtaining permission from AHS directly.
           </p>
         </section>
 

@@ -26,6 +26,8 @@ export async function GET(request: Request) {
       facilities,
       attribution:
         'Wait time data published by Alberta Health Services. This service is independent and not affiliated with AHS.',
+      license:
+        'Underlying wait times are AHS content, licensed by AHS for personal, non-commercial use; commercial use requires written permission from AHS. No rights in that data are granted here.',
       disclaimer:
         'Estimates only, not medical advice, and not guaranteed. Call 911 for emergencies or 811 for free nurse advice.',
     },

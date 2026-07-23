@@ -1,87 +1,128 @@
 /**
  * Service worker for ER Wait Time Navigator.
  *
- * Two jobs:
- *   1. Keep the app usable with no connection — hospital parkades and
- *      basements have terrible reception, and a board from ten minutes ago is
- *      far more useful than an error page.
- *   2. Receive wait-threshold push notifications.
+ * Design rule, learned the hard way: **only content-addressed assets may ever be
+ * served cache-first.** Everything else on this site can carry a wait time, and a
+ * confidently-served stale wait time is more dangerous than no page at all.
  *
- * Caching strategy is deliberately network-first for anything carrying wait
- * times. Serving a stale wait time as if it were current would be worse than
- * showing nothing, so cached data is only ever a labelled fallback.
+ * The previous revision violated that in two ways, both fixed here:
+ *
+ *   1. It precached `/`, `/triage` and `/alternatives` as HTML. That HTML embeds
+ *      build-specific chunk URLs, which 404 after any redeploy, so the offline
+ *      fallback rendered a blank unhydrated page.
+ *   2. Its cache-first branch was the default, which swallowed Next.js RSC
+ *      payloads — client-side navigations carry `mode: 'same-origin'`, not
+ *      'navigate' — and served them forever without revalidation.
+ *
+ * Serving a cached page is still fine and useful: the board stamps its own fetch
+ * time and renders "updated N minutes ago" from it, so a cached copy is visibly
+ * self-labelling rather than silently wrong.
  */
 
-const VERSION = 'v1';
-const SHELL_CACHE = `erwtn-shell-${VERSION}`;
-const DATA_CACHE = `erwtn-data-${VERSION}`;
+// Bump on any change to caching behaviour. `activate` drops every `erwtn-` cache
+// not named below, so a bump is also the remedy for a bad cache in the wild.
+const VERSION = 'v2';
+const ASSET_CACHE = `erwtn-assets-${VERSION}`;
+const RUNTIME_CACHE = `erwtn-runtime-${VERSION}`;
+const CURRENT_CACHES = [ASSET_CACHE, RUNTIME_CACHE];
 
-/** Routes worth having available offline. */
-const SHELL_ASSETS = [
-  '/',
-  '/triage',
-  '/alternatives',
-  '/offline',
-  '/manifest.webmanifest',
-  '/icons/icon-192.png',
-];
+/**
+ * Precache only things that carry no live data and no build-specific references.
+ * Note the absence of `/`, `/triage` and `/alternatives` — that absence is the
+ * fix for the blank-page bug, not an oversight.
+ */
+const PRECACHE = ['/offline', '/icons/icon-192.png', '/icons/icon-96.png'];
+
+/** Keep the runtime cache from growing without bound on a long-lived install. */
+const RUNTIME_MAX_ENTRIES = 60;
+
+/**
+ * Content-addressed paths. Their URL changes whenever their bytes change, which
+ * is precisely what makes cache-first safe for them and unsafe for everything
+ * else.
+ */
+function isImmutableAsset(url) {
+  return (
+    url.pathname.startsWith('/_next/static/') ||
+    url.pathname.startsWith('/icons/') ||
+    url.pathname === '/favicon.ico'
+  );
+}
+
+/** Requests that must always hit the network and must never be stored. */
+function isNeverCacheable(url) {
+  return (
+    url.pathname.startsWith('/api/drive-times') ||
+    url.pathname.startsWith('/api/alerts') ||
+    url.pathname.startsWith('/api/cron') ||
+    url.pathname.startsWith('/api/stripe')
+  );
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
-      .open(SHELL_CACHE)
-      // Individual failures must not abort the whole install.
-      .then((cache) => Promise.allSettled(SHELL_ASSETS.map((url) => cache.add(url))))
+      .open(ASSET_CACHE)
+      .then((cache) => Promise.allSettled(PRECACHE.map((url) => cache.add(url))))
       .then(() => self.skipWaiting()),
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key.startsWith('erwtn-') && !key.endsWith(VERSION))
-            .map((key) => caches.delete(key)),
-        ),
-      )
-      .then(() => self.clients.claim()),
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((key) => key.startsWith('erwtn-') && !CURRENT_CACHES.includes(key))
+          .map((key) => caches.delete(key)),
+      );
+      await self.clients.claim();
+    })(),
   );
 });
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (isNeverCacheable(url)) return;
 
-  // Never cache these: routing results are per-location, and alert writes must
-  // always reach the server.
-  if (url.pathname.startsWith('/api/drive-times') || url.pathname.startsWith('/api/alerts')) {
+  if (isImmutableAsset(url)) {
+    event.respondWith(cacheFirst(request));
     return;
   }
 
-  const isDataRequest =
-    url.pathname.startsWith('/api/') || request.mode === 'navigate';
-
-  if (isDataRequest) {
-    event.respondWith(networkFirst(request));
-    return;
-  }
-
-  event.respondWith(cacheFirst(request));
+  // Everything else — navigations, RSC payloads, the wait-times API, the
+  // manifest — is treated as live data.
+  event.respondWith(networkFirst(request));
 });
 
-async function networkFirst(request) {
-  const cache = await caches.open(DATA_CACHE);
+async function cacheFirst(request) {
+  const cache = await caches.open(ASSET_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
   try {
     const response = await fetch(request);
-    if (response && response.status === 200) {
+    if (response && response.status === 200 && response.type === 'basic') {
       cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    return new Response('', { status: 504, statusText: 'Offline' });
+  }
+}
+
+async function networkFirst(request) {
+  const cache = await caches.open(RUNTIME_CACHE);
+
+  try {
+    const response = await fetch(request);
+    if (response && response.status === 200 && response.type === 'basic') {
+      cache.put(request, response.clone()).then(() => trimCache(cache));
     }
     return response;
   } catch {
@@ -93,6 +134,9 @@ async function networkFirst(request) {
       if (offline) return offline;
     }
 
+    // A failed RSC fetch must be an error, not an empty success. Returning a
+    // fake 200 here would leave the router parsing nonsense; a 503 makes Next
+    // fall back to a full page load, which recovers cleanly.
     return new Response(
       JSON.stringify({
         error: 'offline',
@@ -103,20 +147,13 @@ async function networkFirst(request) {
   }
 }
 
-async function cacheFirst(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-
-  try {
-    const response = await fetch(request);
-    if (response && response.status === 200 && response.type === 'basic') {
-      const cache = await caches.open(SHELL_CACHE);
-      cache.put(request, response.clone());
-    }
-    return response;
-  } catch {
-    return new Response('', { status: 504 });
-  }
+/** Evict oldest-first once the runtime cache exceeds its cap. */
+async function trimCache(cache) {
+  const keys = await cache.keys();
+  if (keys.length <= RUNTIME_MAX_ENTRIES) return;
+  await Promise.all(
+    keys.slice(0, keys.length - RUNTIME_MAX_ENTRIES).map((key) => cache.delete(key)),
+  );
 }
 
 self.addEventListener('push', (event) => {
@@ -137,7 +174,6 @@ self.addEventListener('push', (event) => {
       tag: payload.tag ?? 'erwtn',
       renotify: false,
       data: { url: payload.url ?? '/' },
-      // A wait-time alert is time-critical and worthless if it sits silently.
       requireInteraction: false,
       vibrate: [100, 50, 100],
     }),

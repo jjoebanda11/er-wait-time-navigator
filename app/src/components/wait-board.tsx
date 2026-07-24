@@ -82,7 +82,27 @@ export function WaitBoard({
     );
   }, [update]);
 
-  const origin = location.status === 'ready' ? { lat: location.lat, lng: location.lng } : null;
+  /**
+   * The user's position, as a reference-stable object.
+   *
+   * This must be memoised on the primitive coordinates, not rebuilt inline.
+   * `origin` is a dependency of the ranking effect below, and an object literal
+   * evaluated during render is a fresh reference every time — so the effect
+   * re-fires, calls setState, triggers a render, produces another new object,
+   * and the component spins forever with the main thread pinned. The browser
+   * eventually offers to kill the tab.
+   *
+   * That failure only appears once a location is known, which is the app's
+   * primary feature, and the position is restored from localStorage on load, so
+   * it reproduced on every subsequent visit including hard refreshes.
+   */
+  const originLat = location.status === 'ready' ? location.lat : null;
+  const originLng = location.status === 'ready' ? location.lng : null;
+
+  const origin = useMemo(
+    () => (originLat != null && originLng != null ? { lat: originLat, lng: originLng } : null),
+    [originLat, originLng],
+  );
 
   /**
    * The board as it looks before we know where the user is: the selected
@@ -166,7 +186,10 @@ export function WaitBoard({
     return () => {
       cancelled = true;
     };
-  }, [snapshot, region, patientType, prefs.includeUrgentCare, origin, refinedTimes]);
+    // Depends on `snapshot.facilities`, not `snapshot`. Every value in this
+    // array must be reference-stable across renders, or the effect re-fires,
+    // sets state, and spins the component forever.
+  }, [snapshot.facilities, region, patientType, prefs.includeUrgentCare, origin, refinedTimes]);
 
   // Progressive enhancement: if the deployment has a routing key, ask the
   // server for real road times and re-rank. Failure here is silent because the

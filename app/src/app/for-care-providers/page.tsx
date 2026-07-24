@@ -171,12 +171,21 @@ export default async function ForCareProvidersPage() {
         </section>
 
         <section className="page-break-avoid rounded-xl surface p-4">
-          <h2 className="text-lg font-bold">Try it now</h2>
+          <h2 className="text-lg font-bold">Two ways to use it</h2>
           <p className="mt-1 text-sm">
+            <strong>Coordinator dashboard</strong> —{' '}
             <Link href="/dashboard" className="font-semibold text-brand-600 underline">
               {config.site.url.replace(/^https?:\/\//, '')}/dashboard
-            </Link>{' '}
-            — add one address and you will see the answer in under a minute.
+            </Link>
+            . For home care: every address you serve on one screen, longest wait first.
+          </p>
+          <p className="mt-1.5 text-sm">
+            <strong>Station display</strong> —{' '}
+            <Link href="/station" className="font-semibold text-brand-600 underline">
+              {config.site.url.replace(/^https?:\/\//, '')}/station
+            </Link>
+            . For a single building: a hands-free wall screen showing the fastest option right now.
+            Set it up once and mount a tablet.
           </p>
           <p className="mt-2 text-sm">
             Questions:{' '}

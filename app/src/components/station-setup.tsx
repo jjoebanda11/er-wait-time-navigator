@@ -10,6 +10,7 @@ interface GeocodeHit {
   label: string;
   lat: number;
   lng: number;
+  precise?: boolean;
 }
 
 /**
@@ -36,7 +37,9 @@ export function StationSetup({ regions }: { regions: string[] }) {
     setStatus(null);
     setChosen(null);
     try {
-      const res = await fetch(`/api/geocode?q=${encodeURIComponent(address)}`);
+      const res = await fetch(
+        `/api/geocode?q=${encodeURIComponent(address)}&region=${encodeURIComponent(region)}`,
+      );
       const data = (await res.json()) as { results?: GeocodeHit[]; error?: string };
       if (!res.ok || !data.results?.length) {
         setStatus(data.error ?? 'No matching Alberta address found.');
@@ -49,7 +52,7 @@ export function StationSetup({ regions }: { regions: string[] }) {
     } finally {
       setBusy(false);
     }
-  }, [address]);
+  }, [address, region]);
 
   const link =
     chosen && name.trim() && region

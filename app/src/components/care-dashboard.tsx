@@ -26,6 +26,7 @@ interface GeocodeHit {
   label: string;
   lat: number;
   lng: number;
+  precise?: boolean;
 }
 
 /** Accept a pasted "53.54, -113.49" so the tool still works if geocoding is down. */
@@ -373,7 +374,11 @@ function AddLocationForm({
     setBusy(true);
     setStatus(null);
     try {
-      const res = await fetch(`/api/geocode?q=${encodeURIComponent(address)}`);
+      // Bias by the selected region so a cross-city street resolves to the
+      // right end of it.
+      const res = await fetch(
+        `/api/geocode?q=${encodeURIComponent(address)}&region=${encodeURIComponent(region)}`,
+      );
       const data = (await res.json()) as { results?: GeocodeHit[]; error?: string };
       if (!res.ok || !data.results?.length) {
         setStatus(data.error ?? 'No matching Alberta address found.');
@@ -386,7 +391,7 @@ function AddLocationForm({
     } finally {
       setBusy(false);
     }
-  }, [address]);
+  }, [address, region]);
 
   const choose = (hit: GeocodeHit) => {
     onAdd({
@@ -516,9 +521,21 @@ function AddLocationForm({
                 <button
                   type="button"
                   onClick={() => choose(hit)}
-                  className="w-full rounded-lg border px-3 py-2 text-left text-sm hover:border-brand-600 hover:bg-[var(--bg-subtle)]"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:border-brand-600 hover:bg-[var(--bg-subtle)]"
                 >
-                  {hit.label}
+                  <span>{hit.label}</span>
+                  {hit.precise === false && (
+                    <span
+                      className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                      style={{
+                        background: 'var(--color-band-yellow-soft)',
+                        color: 'var(--color-band-yellow)',
+                      }}
+                      title="This matched a street, not a specific building. It is close enough for drive-time ranking, but confirm it is the right part of the street."
+                    >
+                      street level
+                    </span>
+                  )}
                 </button>
               </li>
             ))}

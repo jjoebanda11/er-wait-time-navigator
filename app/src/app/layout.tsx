@@ -90,6 +90,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/triage" className="hover:underline">
                 Where should I go?
               </Link>
+              <Link href="/for-care-providers" className="hover:underline">
+                For care providers
+              </Link>
               <Link href="/data" className="hover:underline">
                 Where our data comes from
               </Link>

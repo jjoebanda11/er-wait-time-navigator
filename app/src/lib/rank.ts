@@ -1,6 +1,6 @@
 import type { GeoPoint, NormalizedFacility } from './ahs/types';
 import type { DriveTimeProvider, DriveTimeResult } from './geo/drive-time';
-import { parkingOverheadMinutes } from './geo/haversine';
+import { estimateDriveMinutes, haversineKm, parkingOverheadMinutes } from './geo/haversine';
 
 /** Who the trip is for. Drives pediatric routing, which is a safety concern. */
 export type PatientType = 'adult' | 'child';
@@ -91,21 +91,66 @@ export async function rankFacilities(
   provider: DriveTimeProvider,
   options: RankOptions,
 ): Promise<RankedFacility[]> {
-  const { origin, patientType = 'adult', region, includeUrgentCare = true } = options;
+  const candidates = filterCandidates(facilities, options);
+  if (candidates.length === 0) return [];
 
-  let candidates = facilities.filter((f) => {
+  const travel = await provider.matrix(
+    options.origin,
+    candidates.map((f) => f.coords),
+  );
+
+  return applyRanking(candidates, travel, options);
+}
+
+/**
+ * Rank without awaiting a provider, using the built-in distance estimator.
+ *
+ * Exists for the care-provider dashboard, which ranks every roster location on
+ * every render. Doing that work in an effect would mean a setState per render
+ * pass, which is the precise shape of the render loop that previously locked
+ * the consumer board's main thread. Pure synchronous computation during render
+ * cannot loop, so the dashboard uses this instead.
+ *
+ * Ordering logic is shared with the async path below, so the two can never
+ * disagree about which facility is best.
+ */
+export function rankFacilitiesSync(
+  facilities: NormalizedFacility[],
+  options: RankOptions,
+): RankedFacility[] {
+  const candidates = filterCandidates(facilities, options);
+  if (candidates.length === 0) return [];
+
+  const travel: DriveTimeResult[] = candidates.map((f) => ({
+    minutes: estimateDriveMinutes(options.origin, f.coords),
+    distanceKm: haversineKm(options.origin, f.coords),
+    source: 'estimate' as const,
+    liveTraffic: false,
+  }));
+
+  return applyRanking(candidates, travel, options);
+}
+
+function filterCandidates(
+  facilities: NormalizedFacility[],
+  options: RankOptions,
+): NormalizedFacility[] {
+  const { patientType = 'adult', region, includeUrgentCare = true } = options;
+
+  return facilities.filter((f) => {
     if (region && f.region !== region) return false;
     if (!includeUrgentCare && f.kind === 'urgent-care') return false;
     if (patientType === 'child' && excludesChildren(f)) return false;
     return true;
   });
+}
 
-  if (candidates.length === 0) return [];
-
-  const travel = await provider.matrix(
-    origin,
-    candidates.map((f) => f.coords),
-  );
+function applyRanking(
+  candidates: NormalizedFacility[],
+  travel: DriveTimeResult[],
+  options: RankOptions,
+): RankedFacility[] {
+  const { patientType = 'adult' } = options;
 
   let ranked: RankedFacility[] = candidates.map((facility, i) => {
     const trip = travel[i];

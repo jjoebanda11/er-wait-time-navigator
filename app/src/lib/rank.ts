@@ -78,6 +78,21 @@ function excludesChildren(facility: NormalizedFacility): boolean {
 }
 
 /**
+ * Children's hospitals see only paediatric patients — the Stollery and Alberta
+ * Children's are 17-and-under. Ranking an adult to one of them is not a
+ * preference miss, it is a wrong answer: the adult would be turned away and
+ * sent on to another ER, losing exactly the time this tool exists to save. So
+ * a paediatric-only site is excluded outright for adult patients, mirroring the
+ * way adult-only departments are excluded for children.
+ */
+function excludesAdults(facility: NormalizedFacility): boolean {
+  if (facility.kind !== 'pediatric-emergency') return false;
+  // A split site that publishes a separate adult department is not adult-
+  // excluding; only stand-alone children's hospitals are.
+  return /children|paediatric|pediatric|stollery/i.test(facility.name);
+}
+
+/**
  * Rank facilities by true door-to-doctor time.
  *
  * The ordering rule is: facilities with a known wait always outrank facilities
@@ -141,6 +156,7 @@ function filterCandidates(
     if (region && f.region !== region) return false;
     if (!includeUrgentCare && f.kind === 'urgent-care') return false;
     if (patientType === 'child' && excludesChildren(f)) return false;
+    if (patientType === 'adult' && excludesAdults(f)) return false;
     return true;
   });
 }

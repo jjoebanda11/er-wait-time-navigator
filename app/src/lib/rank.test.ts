@@ -39,7 +39,9 @@ describe('rankFacilities', () => {
       region: 'Edmonton',
     });
 
-    expect(ranked.length).toBe(12);
+    // 12 Edmonton facilities, less the Stollery which is children-only and so
+    // excluded from an adult ranking (the default patient type).
+    expect(ranked.length).toBe(11);
 
     const known = ranked.filter((r) => r.doorToDoctorMinutes != null);
     for (let i = 1; i < known.length; i += 1) {
@@ -115,6 +117,27 @@ describe('rankFacilities', () => {
     // captured payload, so it should surface at the top for a child.
     expect(ranked[0].facility.name).toBe("Stollery Children's Hospital");
     expect(ranked[0].pediatricPreferred).toBe(true);
+  });
+
+  it('never sends an adult to a children-only hospital', async () => {
+    // Stollery is 17-and-under. An adult routed there would be turned away, so
+    // it must not appear in an adult ranking at all — even though it may post
+    // the shortest raw wait.
+    const ranked = await rankFacilities(facilities, estimateProvider, {
+      origin: DOWNTOWN_EDMONTON,
+      region: 'Edmonton',
+      patientType: 'adult',
+    });
+    expect(ranked.some((r) => r.facility.name === "Stollery Children's Hospital")).toBe(false);
+  });
+
+  it('still offers the children-only hospital to a child', async () => {
+    const ranked = await rankFacilities(facilities, estimateProvider, {
+      origin: DOWNTOWN_EDMONTON,
+      region: 'Edmonton',
+      patientType: 'child',
+    });
+    expect(ranked.some((r) => r.facility.name === "Stollery Children's Hospital")).toBe(true);
   });
 
   it('excludes adult-only departments when the patient is a child', async () => {
